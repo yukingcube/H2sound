@@ -1,0 +1,463 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#ffffff">
+<title>身体からの便り用効果音パッド</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --text: #111111;
+    --muted: #999999;
+    --line: #e5e5e5;
+    --fill: #f2f2f2;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", sans-serif;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+  }
+  body {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    padding: calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));
+    gap: 16px;
+  }
+
+  header { display: flex; align-items: center; gap: 16px; }
+  h1 { font-size: 18px; font-weight: 600; white-space: nowrap; }
+  #status { flex: 1; color: var(--muted); font-size: 13px; }
+  #stopAll {
+    background: var(--text);
+    color: #fff;
+    border: 0;
+    border-radius: 8px;
+    padding: 12px 28px;
+    font: inherit;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+  #stopAll:active { opacity: .7; }
+
+  #grid {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(3, 1fr);
+    gap: 12px;
+  }
+  .cell {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .cell.playing { border-color: var(--text); }
+  .cell.missing .pad { color: var(--muted); cursor: default; }
+
+  .pad {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    cursor: pointer;
+    touch-action: manipulation;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 8px;
+    overflow: hidden;
+  }
+  .pad:active { background: var(--fill); }
+  .pad .bar {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 0;
+    background: var(--fill);
+    pointer-events: none;
+  }
+  .pad .key {
+    position: absolute;
+    top: 8px;
+    left: 12px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .pad .name {
+    position: relative;
+    font-size: clamp(16px, 2.4vw, 26px);
+    font-weight: 600;
+    line-height: 1.3;
+    text-align: center;
+    word-break: break-word;
+  }
+  .pad .state {
+    position: relative;
+    font-size: 12px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .vol {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 12px 8px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .vol input { flex: 1; min-width: 0; height: 28px; accent-color: var(--text); }
+  .vol output { width: 38px; text-align: right; font-variant-numeric: tabular-nums; }
+
+  #overlay {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, .96);
+    cursor: pointer;
+    z-index: 10;
+  }
+  #overlay.hidden { display: none; }
+  #overlay .box { text-align: center; padding: 24px; }
+  #overlay .big { font-size: 22px; font-weight: 600; margin-bottom: 8px; }
+  #overlay .small { font-size: 13px; color: var(--muted); line-height: 1.8; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>身体からの便り用効果音パッド</h1>
+  <span id="status">読み込み中…</span>
+  <button id="stopAll" type="button">全停止</button>
+</header>
+
+<main id="grid"></main>
+
+<div id="overlay">
+  <div class="box">
+    <p class="big">タップして開始</p>
+    <p class="small" id="loadInfo">音源を読み込み中…</p>
+    <p class="small">PC：キーボードの 1〜9 で再生、Esc で全停止</p>
+  </div>
+</div>
+
+<script>
+/* =========================================================
+   ここを編集する：ボタン名と音源ファイル（上から 1〜9 番）
+   音源は sounds フォルダに入れる。mp3 / wav / m4a が使える
+   ========================================================= */
+const SOUNDS = [
+  { name: "チャイム", file: "sounds/01.mp3" },
+  { name: "目覚まし", file: "sounds/02.mp3" },
+  { name: "にわとり", file: "sounds/03.mp3" },
+  { name: "効果音 4", file: "sounds/04.mp3" },
+  { name: "効果音 5", file: "sounds/05.mp3" },
+  { name: "効果音 6", file: "sounds/06.mp3" },
+  { name: "効果音 7", file: "sounds/07.mp3" },
+  { name: "効果音 8", file: "sounds/08.mp3" },
+  { name: "効果音 9", file: "sounds/09.mp3" },
+];
+
+/* 音量スライダーの上限（1.5 = 150%）。小さい音源を持ち上げる用 */
+const VOL_MAX = 1.5;
+
+/* ---------------------------------------------------------- */
+
+const AC = window.AudioContext || window.webkitAudioContext;
+const ctx = new AC();
+const isFile = location.protocol === "file:";
+const grid = document.getElementById("grid");
+const statusEl = document.getElementById("status");
+const overlay = document.getElementById("overlay");
+const loadInfo = document.getElementById("loadInfo");
+let unlocked = false;
+
+// iPad：消音モードでも鳴らす（Safari 16.4+）
+try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch (e) {}
+
+const volKey = (i) => "sfx-vol:" + location.pathname + ":" + i;
+function loadVol(i) {
+  try {
+    const v = parseFloat(localStorage.getItem(volKey(i)));
+    return isNaN(v) ? 1 : Math.min(Math.max(v, 0), VOL_MAX);
+  } catch (e) { return 1; }
+}
+function saveVol(i, v) {
+  try { localStorage.setItem(volKey(i), String(v)); } catch (e) {}
+}
+
+const fmt = (sec) => {
+  sec = Math.max(0, Math.ceil(sec));
+  return Math.floor(sec / 60) + ":" + String(sec % 60).padStart(2, "0");
+};
+
+/* ---------- パッド生成 ---------- */
+const pads = SOUNDS.slice(0, 9).map((s, i) => {
+  const cell = document.createElement("div");
+  cell.className = "cell";
+  cell.innerHTML = `
+    <button class="pad" type="button">
+      <span class="bar"></span>
+      <span class="key">${i + 1}</span>
+      <span class="name"></span>
+      <span class="state">読み込み中…</span>
+    </button>
+    <label class="vol">
+      <input type="range" min="0" max="${Math.round(VOL_MAX * 100)}" step="5">
+      <output></output>
+    </label>`;
+  cell.querySelector(".name").textContent = s.name;
+  grid.appendChild(cell);
+
+  const p = {
+    index: i, name: s.name, file: s.file,
+    cell,
+    btn: cell.querySelector(".pad"),
+    bar: cell.querySelector(".bar"),
+    state: cell.querySelector(".state"),
+    slider: cell.querySelector("input"),
+    out: cell.querySelector("output"),
+    volume: loadVol(i),
+    buffer: null, audio: null, duration: 0,
+    missing: false, loaded: false,
+    current: null, lastW: -1, lastSec: -1,
+  };
+
+  p.slider.value = Math.round(p.volume * 100);
+  p.out.textContent = p.slider.value + "%";
+  p.slider.addEventListener("input", () => setVolume(p, p.slider.value / 100));
+
+  p.btn.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    unlock();
+    play(p);
+  });
+  return p;
+});
+
+/* ---------- 読み込み ---------- */
+function decode(ab) {
+  return new Promise((resolve, reject) => {
+    const r = ctx.decodeAudioData(ab, resolve, reject);
+    if (r && r.then) r.then(resolve, reject);
+  });
+}
+
+async function load(p) {
+  try {
+    const res = await fetch(p.file, { cache: "no-cache" });
+    if (!res.ok) throw new Error(res.status);
+    p.buffer = await decode(await res.arrayBuffer());
+    p.duration = p.buffer.duration;
+    markReady(p);
+  } catch (err) {
+    // ファイルを直接開いた場合は fetch が使えないので <audio> で代用（PC確認用）
+    if (isFile) return loadFallback(p);
+    markMissing(p);
+  }
+}
+
+function loadFallback(p) {
+  return new Promise((resolve) => {
+    const a = new Audio();
+    a.preload = "auto";
+    a.addEventListener("loadedmetadata", () => {
+      p.audio = a;
+      p.duration = a.duration;
+      markReady(p);
+      resolve();
+    }, { once: true });
+    a.addEventListener("error", () => { markMissing(p); resolve(); }, { once: true });
+    a.addEventListener("ended", () => {
+      if (p.current && p.current.audio) { p.current = null; setPlaying(p, false); }
+    });
+    a.src = p.file;
+  });
+}
+
+function markReady(p) {
+  p.loaded = true;
+  p.state.textContent = fmt(p.duration);
+}
+function markMissing(p) {
+  p.missing = true;
+  p.cell.classList.add("missing");
+  p.state.textContent = "音源なし";
+}
+
+Promise.all(pads.map(load)).then(() => {
+  const ok = pads.filter((p) => p.loaded).length;
+  const missing = pads.filter((p) => p.missing).map((p) => p.index + 1);
+  let text = `${ok}/${pads.length} 読み込み完了`;
+  if (missing.length) text += `（音源なし：${missing.join(", ")}）`;
+  if (isFile) text += "　※ローカル確認モード";
+  statusEl.textContent = text;
+  loadInfo.textContent = text;
+});
+
+/* ---------- 再生・停止 ---------- */
+function unlock() {
+  if (ctx.state !== "running") ctx.resume();
+  if (unlocked) return;
+  unlocked = true;
+  // 無音を一瞬鳴らして iPad のオーディオを起こしておく
+  try {
+    const b = ctx.createBuffer(1, 1, 22050);
+    const s = ctx.createBufferSource();
+    s.buffer = b;
+    s.connect(ctx.destination);
+    s.start(0);
+  } catch (e) {}
+  overlay.classList.add("hidden");
+  keepAwake();
+}
+
+function play(p) {
+  if (p.missing || !p.loaded) return;
+  stopPad(p, 0.01); // 同じボタン → 最初から再生し直す
+
+  if (p.buffer) {
+    const src = ctx.createBufferSource();
+    const g = ctx.createGain();
+    src.buffer = p.buffer;
+    g.gain.value = p.volume;
+    src.connect(g);
+    g.connect(ctx.destination);
+    src.onended = () => {
+      if (p.current && p.current.src === src) { p.current = null; setPlaying(p, false); }
+    };
+    src.start();
+    p.current = { src, g, start: ctx.currentTime };
+  } else if (p.audio) {
+    p.audio.volume = Math.min(p.volume, 1); // <audio> は 100% が上限
+    p.audio.currentTime = 0;
+    p.audio.play().catch(() => {});
+    p.current = { audio: p.audio };
+  }
+  setPlaying(p, true);
+}
+
+function stopPad(p, fade = 0.03) {
+  const c = p.current;
+  if (!c) return;
+  p.current = null;
+  if (c.src) {
+    const t = ctx.currentTime;
+    try {
+      c.g.gain.cancelScheduledValues(t);
+      c.g.gain.setValueAtTime(c.g.gain.value, t);
+      c.g.gain.linearRampToValueAtTime(0, t + fade); // プツッというノイズを防ぐ短いフェード
+      c.src.stop(t + fade + 0.01);
+    } catch (e) {}
+  } else if (c.audio) {
+    c.audio.pause();
+  }
+  setPlaying(p, false);
+}
+
+function stopAll() {
+  pads.forEach((p) => stopPad(p, 0.05));
+}
+
+function setPlaying(p, on) {
+  p.cell.classList.toggle("playing", on);
+  if (!on) {
+    p.lastSec = -1;
+    if (p.loaded) p.state.textContent = fmt(p.duration);
+  }
+}
+
+function setVolume(p, v) {
+  p.volume = v;
+  p.out.textContent = Math.round(v * 100) + "%";
+  saveVol(p.index, v);
+  const c = p.current;
+  if (c && c.g) c.g.gain.setTargetAtTime(v, ctx.currentTime, 0.02);
+  if (c && c.audio) c.audio.volume = Math.min(v, 1);
+}
+
+/* ---------- 進行バーと残り時間 ---------- */
+function tick() {
+  for (const p of pads) {
+    const c = p.current;
+    let ratio = 0, elapsed = 0;
+    if (c && c.src) elapsed = ctx.currentTime - c.start;
+    else if (c && c.audio) elapsed = c.audio.currentTime;
+    if (c && p.duration) ratio = Math.min(elapsed / p.duration, 1);
+
+    const w = Math.round(ratio * 1000) / 10;
+    if (w !== p.lastW) { p.bar.style.width = w + "%"; p.lastW = w; }
+
+    if (c) {
+      const remain = Math.ceil(p.duration - elapsed);
+      if (remain !== p.lastSec) { p.state.textContent = "残り " + fmt(remain); p.lastSec = remain; }
+    }
+  }
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+
+/* ---------- 操作 ---------- */
+document.getElementById("stopAll").addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  unlock();
+  stopAll();
+});
+
+overlay.addEventListener("pointerdown", (e) => { e.preventDefault(); unlock(); });
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { e.preventDefault(); unlock(); stopAll(); return; }
+  if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
+  const n = parseInt(e.key, 10);
+  if (n >= 1 && n <= pads.length) {
+    e.preventDefault();
+    unlock();
+    play(pads[n - 1]);
+  }
+});
+
+// 長押しメニューを出さない
+document.addEventListener("contextmenu", (e) => e.preventDefault());
+
+/* ---------- 本番中に画面がスリープしないようにする ---------- */
+let wakeLock = null;
+async function keepAwake() {
+  try {
+    if ("wakeLock" in navigator && document.visibilityState === "visible") {
+      wakeLock = await navigator.wakeLock.request("screen");
+    }
+  } catch (e) {}
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && unlocked) {
+    keepAwake();
+    if (ctx.state !== "running") ctx.resume();
+  }
+});
+</script>
+</body>
+</html>
